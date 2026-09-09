@@ -6,6 +6,7 @@ function num(name: string, fallback: number): number {
   return Number.isFinite(n) ? n : fallback;
 }
 
+
 export const config = {
   port: num("PORT", 8100),
   corsOrigin: process.env.CORS_ORIGIN ?? "*",
