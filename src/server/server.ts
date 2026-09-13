@@ -361,13 +361,19 @@ async function handle(req: IncomingMessage, res: ServerResponse) {
     // base inherits the global default, so surface that concrete number rather than a
     // blank. The engine reads the raw (possibly null) value straight from the DB.
     if (s.baseRisk == null) s.baseRisk = await getBaseRisk();
-    /* Whether we would actually trade for them, reported alongside the settings
-     * the page already loads. Without this a subscriber can switch copying to
-     * "auto", see it saved, and have every signal silently skipped — the exact
-     * failure the readiness gate exists to prevent, moved up into the UI.
-     * null on the ATAS pull deployment, where no one has a dxFeed account and
-     * the question is meaningless. */
-    return json(res, 200, { ...s, ...(await tradeReadinessFor(payload.sub)) });
+    const adapter = (process.env.EXECUTION_ADAPTER ?? "atas").toLowerCase() === "dxfeed" ? "dxfeed" : "atas";
+    /* Terminal-setup credentials (backend URL, ATAS paste fields) are ADMIN-only
+     * and only meaningful on the ATAS pull deployment. Subscribers on dxFeed
+     * never need them; exposing the production API origin to every subscriber
+     * is unnecessary surface area. */
+    const dbUser = await getUserById(payload.sub);
+    const showTerminalSetup = adapter === "atas" && dbUser?.role === "ADMIN";
+    return json(res, 200, {
+      ...s,
+      ...(await tradeReadinessFor(payload.sub)),
+      executionAdapter: adapter,
+      showTerminalSetup,
+    });
   }
   if (path === "/api/copy/settings" && (req.method === "PUT" || req.method === "POST")) {
     const payload = requireUser(req);
@@ -380,7 +386,16 @@ async function handle(req: IncomingMessage, res: ServerResponse) {
       return json(res, 503, { error: "Automated copying is disabled on this server (COPY_EXECUTION is not set)." });
     }
     await updateCopySettings(payload.sub, clean);
-    return json(res, 200, clean);
+    const adapter = (process.env.EXECUTION_ADAPTER ?? "atas").toLowerCase() === "dxfeed" ? "dxfeed" : "atas";
+    const dbUser = await getUserById(payload.sub);
+    const showTerminalSetup = adapter === "atas" && dbUser?.role === "ADMIN";
+    if (clean.baseRisk == null) clean.baseRisk = await getBaseRisk();
+    return json(res, 200, {
+      ...clean,
+      ...(await tradeReadinessFor(payload.sub)),
+      executionAdapter: adapter,
+      showTerminalSetup,
+    });
   }
   if (path === "/api/copy/orders" && req.method === "GET") {
     const payload = requireUser(req);
