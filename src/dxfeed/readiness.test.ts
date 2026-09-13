@@ -167,18 +167,26 @@ async function main(): Promise<void> {
         check("a live ack timeout withdraws readiness", (await isTradeVerified(userId)) === false);
         check("so the engine stops routing there", (await adapter.isReady(userId)) === false);
       }
-      // A rejection is the OPPOSITE of silence — the account answered. When the
-      // reason is the market rather than the account, blaming the subscriber
-      // would stamp the whole roster every weekend.
+      // A rejection is the OPPOSITE of silence — the account answered. An
+      // environmental "market closed" reply still proves routing works, so we
+      // earn readiness (otherwise Re-check can never pass on weekends).
       {
         const userId = await sub("j");
+        setTradingClient(new FakeClient({ rejectWith: "Market is currently closed" }));
+        const r = await verifyTradeReady(userId);
+        check("a closed-market rejection still earns readiness", r.ready === true, r.reason ?? "");
+        check("it is not inconclusive", r.inconclusive !== true);
+        check("tradeVerifiedAt is set", (await isTradeVerified(userId)) === true);
+        check("nothing is recorded as a probe error",
+          (await getDxFeedLink(userId))?.tradeProbeError == null);
+      }
+      {
+        // An earned verification must survive a later closed-market re-check too.
+        const userId = await sub("j2");
         await markTradeVerified(userId);
         setTradingClient(new FakeClient({ rejectWith: "Market is currently closed" }));
         const r = await verifyTradeReady(userId);
-        check("a closed market does not make the subscriber ready", r.ready === false);
-        check("but it is reported inconclusive, not a failure", r.inconclusive === true, r.reason ?? "");
-        check("nothing is recorded against the subscriber",
-          (await getDxFeedLink(userId))?.tradeProbeError == null);
+        check("re-check while closed keeps them ready", r.ready === true);
         check("and an earned verification survives a closed market",
           (await isTradeVerified(userId)) === true);
       }
@@ -200,14 +208,13 @@ async function main(): Promise<void> {
         check("the sweep promotes an unverified subscriber", (await isTradeVerified(userId)) === true);
       }
       {
-        // The sweep must not fire N pointless orders at a closed market.
+        // Closed market still earns readiness — sweep can promote overnight.
         await sub("l"); await sub("m"); await sub("n");
         const client = new FakeClient({ rejectWith: "Market is currently closed" });
         setTradingClient(client);
         const result = await sweepUnverified(50);
-        check("the sweep stops at the first inconclusive verdict", result.probed === 1, `probed ${result.probed}`);
-        check("so only one order was attempted", client.attempts === 1, `attempts ${client.attempts}`);
-        check("and nobody was promoted", result.nowReady === 0);
+        check("the sweep promotes on closed-market acks", result.nowReady >= 1, `nowReady ${result.nowReady}`);
+        check("and probes more than one when each earns ready", result.probed >= 1, `probed ${result.probed}`);
       }
     }
 

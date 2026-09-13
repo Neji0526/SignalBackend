@@ -31,10 +31,13 @@ const PROBE_PRICE = 100;
 
 /* dxFeed answers an unacceptable order with an explicit validation rejection —
  * which is the OPPOSITE of the failure this gate hunts. A rejection means the
- * account replied; silence means it did not. When the rejection is
- * ENVIRONMENTAL (the CME daily break, a closed weekend) it says nothing at all
- * about the subscriber, so it must not be recorded against them: otherwise every
- * weekend sweep stamps the whole roster with what looks like a broken account. */
+ * account replied; silence means it did not.
+ *
+ * ENVIRONMENTAL rejections (CME daily break / weekend) still prove the routing
+ * path works — OrderInsert reached the account and came back. That is enough to
+ * earn readiness: the silent-swallow failure mode does not produce a clean
+ * "market closed" reply. Without this, admins cannot clear Re-check on weekends
+ * or overnight even for healthy accounts. */
 const ENVIRONMENTAL_REJECTION =
   /market is (currently )?closed|outside (of )?trading hours|session is closed|trading is not allowed at this time/i;
 
@@ -43,9 +46,9 @@ export interface ReadinessResult {
   /** Why not, when ready is false. Persisted for the admin view. */
   reason: string | null;
   /**
-   * We learned nothing — our session, the market or the symbol table was
-   * unavailable. Never the subscriber's fault, so it is neither recorded against
-   * them nor allowed to withdraw a verification they already earned.
+   * We learned nothing — our session or the symbol table was unavailable.
+   * Never the subscriber's fault, so it is neither recorded against them nor
+   * allowed to withdraw a verification they already earned.
    */
   inconclusive?: boolean;
 }
@@ -118,10 +121,15 @@ export async function verifyTradeReady(userId: string): Promise<ReadinessResult>
     if (/order ack timeout/i.test(message)) {
       return refuse(userId, `probe order was not acknowledged: ${message}`);
     }
-    // Answered, but for a reason that is about the market and not the account.
-    // Proves nothing either way, so hold the verdict rather than blaming them.
+    // Account answered with "market closed" / outside hours — that still proves
+    // the routing path (not a silent drop). Earn readiness so Re-check works
+    // on weekends and overnight maintenance.
     if (ENVIRONMENTAL_REJECTION.test(message)) {
-      return inconclusive(`cannot probe right now: ${message}`);
+      await markTradeVerified(userId);
+      console.log(
+        `[dxfeed] readiness for ${userId}: accepted via environmental rejection (${message.slice(0, 120)})`,
+      );
+      return ok;
     }
     // Answered with an account-specific rejection — margin, permissions, limits.
     return refuse(userId, `probe order rejected: ${message}`);
