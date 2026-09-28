@@ -71,11 +71,14 @@ const reaper = setInterval(() => {
  *
  * Slow on purpose: each probe is a real order. Off-hours failures are expected
  * and simply retried on the next pass. */
-const readinessSweep = copyAdapter instanceof DxFeedAdapter
+const readinessSweep = config.autoCopyEnabled && copyAdapter instanceof DxFeedAdapter
   ? setInterval(() => {
       void sweepUnverified(25).catch((e) => console.error("[dxfeed] readiness sweep failed:", (e as Error).message));
     }, 5 * 60_000)
   : null;
+if (!config.autoCopyEnabled) {
+  console.log("[copy] auto-copy disabled (AUTO_COPY_ENABLED is not 1) — no dxFeed provisioning, readiness probes or copied orders");
+}
 
 server.listen(config.port, () => {
   console.log(`SignalBackend listening on http://localhost:${config.port}`);

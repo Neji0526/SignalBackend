@@ -47,6 +47,8 @@ function cors(req: IncomingMessage, res: ServerResponse) {
   res.setHeader("Access-Control-Max-Age", "86400");
 }
 
+const AUTO_COPY_DISABLED = "Auto-copy is disabled on this server (AUTO_COPY_ENABLED is not set).";
+
 function json(res: ServerResponse, status: number, body: unknown) {
   res.writeHead(status, { "Content-Type": "application/json" });
   res.end(JSON.stringify(body));
@@ -155,6 +157,11 @@ async function handle(req: IncomingMessage, res: ServerResponse) {
 
   if (path === "/health") return json(res, 200, { status: "ok", service: "signal-backend" });
 
+  // Feature switches the UI reads to show disabled parts (no auth — flags only).
+  if (path === "/api/features" && req.method === "GET") {
+    return json(res, 200, { autoCopy: config.autoCopyEnabled });
+  }
+
   // --- auth ---
   if (path === "/api/auth/register" && req.method === "POST") {
     const body = await readJson<{ email?: string; password?: string; name?: string }>(req);
@@ -257,7 +264,7 @@ async function handle(req: IncomingMessage, res: ServerResponse) {
     // pull deployment, where "not provisioned at dxFeed" is true of everyone and
     // means nothing.
     const adapter = (process.env.EXECUTION_ADAPTER ?? "atas").toLowerCase() === "dxfeed" ? "dxfeed" : "atas";
-    return json(res, 200, { adapter, rows: await listReadiness() });
+    return json(res, 200, { adapter, autoCopyEnabled: config.autoCopyEnabled, rows: await listReadiness() });
   }
   /* Create this subscriber's dxFeed identity (user -> trading account ->
    * subscription). An ADMIN ACTION on purpose: it creates a real trading account
@@ -266,6 +273,7 @@ async function handle(req: IncomingMessage, res: ServerResponse) {
    * no-op on an already-provisioned subscriber. */
   if (path.startsWith("/api/admin/dxfeed/provision/") && req.method === "POST") {
     if (!(await requireAdmin(req))) return json(res, 403, { error: "forbidden" });
+    if (!config.autoCopyEnabled) return json(res, 403, { error: AUTO_COPY_DISABLED });
     if (!dxfeedReady) return json(res, 503, { error: "dxFeed is not configured (DXFEED_API_KEY is unset)." });
     const id = decodeURIComponent(path.slice("/api/admin/dxfeed/provision/".length).split("/")[0] ?? "");
     if (!id) return json(res, 400, { error: "missing user id" });
@@ -280,6 +288,7 @@ async function handle(req: IncomingMessage, res: ServerResponse) {
 
   if (path.startsWith("/api/admin/dxfeed/readiness/") && req.method === "POST") {
     if (!(await requireAdmin(req))) return json(res, 403, { error: "forbidden" });
+    if (!config.autoCopyEnabled) return json(res, 403, { error: AUTO_COPY_DISABLED });
     const id = decodeURIComponent(path.slice("/api/admin/dxfeed/readiness/".length).split("/")[0] ?? "");
     if (!id) return json(res, 400, { error: "missing user id" });
     // Places a real order (far from market so it cannot fill, and cancelled
@@ -373,6 +382,7 @@ async function handle(req: IncomingMessage, res: ServerResponse) {
       ...(await tradeReadinessFor(payload.sub)),
       executionAdapter: adapter,
       showTerminalSetup,
+      autoCopyEnabled: config.autoCopyEnabled,
     });
   }
   if (path === "/api/copy/settings" && (req.method === "PUT" || req.method === "POST")) {
@@ -380,6 +390,9 @@ async function handle(req: IncomingMessage, res: ServerResponse) {
     if (!payload) return json(res, 401, { error: "unauthorized" });
     const body = await readJson<unknown>(req);
     const clean = sanitizeCopySettings(body);
+    if (clean.mode !== "off" && !config.autoCopyEnabled) {
+      return json(res, 403, { error: AUTO_COPY_DISABLED });
+    }
     // Turning copying ON is meaningless while the server-wide switch is off —
     // say so rather than letting the user believe trades will be placed.
     if (clean.mode !== "off" && !config.copyExecutionEnabled) {
@@ -395,6 +408,7 @@ async function handle(req: IncomingMessage, res: ServerResponse) {
       ...(await tradeReadinessFor(payload.sub)),
       executionAdapter: adapter,
       showTerminalSetup,
+      autoCopyEnabled: config.autoCopyEnabled,
     });
   }
   if (path === "/api/copy/orders" && req.method === "GET") {

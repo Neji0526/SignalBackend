@@ -28,12 +28,19 @@ export const config = {
   /** AES key for broker credentials at rest. Unset = subscribers cannot connect a broker. */
   brokerEncKey: process.env.BROKER_ENC_KEY?.trim() ?? "",
   /**
+   * Auto-copy feature switch. OFF unless AUTO_COPY_ENABLED=1: no dxFeed account
+   * provisioning, no readiness probe orders, no copy engine — the signal app is
+   * view-only. The code stays in place so the feature can be switched back on.
+   */
+  autoCopyEnabled: process.env.AUTO_COPY_ENABLED === "1",
+
+  /**
    * Master switch for placing real orders. OFF unless explicitly enabled, so a
    * deploy can never start trading a subscriber's account by accident (a bad
    * config, a restored backup, a copied .env). Per-user `copyEnabled` is required
-   * on top of this.
+   * on top of this. Also requires the auto-copy feature switch.
    */
-  copyExecutionEnabled: process.env.COPY_EXECUTION === "1",
+  copyExecutionEnabled: process.env.AUTO_COPY_ENABLED === "1" && process.env.COPY_EXECUTION === "1",
 
   /**
    * dxFeed / Volumetrica prop-firm platform. The regulated account + execution

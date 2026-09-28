@@ -459,7 +459,7 @@ let ticking = false;
 export function startCopyEngine(adapter: BrokerAdapter): void {
   if (timer) return;
   if (!config.copyExecutionEnabled) {
-    console.log("[copy] execution disabled (set COPY_EXECUTION=1 to enable) — engine not started");
+    console.log("[copy] execution disabled (set AUTO_COPY_ENABLED=1 and COPY_EXECUTION=1 to enable) — engine not started");
     return;
   }
   console.log(`[copy] engine started (adapter: ${adapter.name}, every ${TICK_MS / 1000}s)`);
