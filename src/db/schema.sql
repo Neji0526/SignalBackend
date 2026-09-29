@@ -210,3 +210,29 @@ CREATE TABLE IF NOT EXISTS "signal"."DxFeedAccount" (
 -- silently losing further orders.
 ALTER TABLE "signal"."DxFeedAccount" ADD COLUMN IF NOT EXISTS "tradeVerifiedAt" timestamptz;
 ALTER TABLE "signal"."DxFeedAccount" ADD COLUMN IF NOT EXISTS "tradeProbeError" text;
+
+-- ---------------------------------------------------------------------------
+-- Closed trades taken on the dxFeed / Volumetrica platforms (Deepchart, ATAS,
+-- Quantower), synced read-only from the Propfirm Bulk/TradesList API by
+-- src/dxfeed/platform-feed.ts. These never reach the trading platform's own
+-- ClosedPosition table, so without this copy a trade placed in Deepchart would
+-- never become a signal. Stored in the TRADER's terms (side, P&L) exactly like
+-- ClosedPosition; source.ts inverts them the same way.
+-- "side" is inferred (the API has no side field): see inferTradeSide().
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS "signal"."PlatformTrade" (
+  "accountId"   text NOT NULL,                 -- dxFeed trading account id
+  "tradeId"     text NOT NULL,
+  "symbol"      text NOT NULL,                 -- contract root, e.g. ES / MNQ
+  "side"        text NOT NULL,                 -- trader side: 'LONG' | 'SHORT'
+  "quantity"    integer NOT NULL,
+  "entryPrice"  numeric(18,6) NOT NULL,
+  "exitPrice"   numeric(18,6) NOT NULL,
+  "realizedPnl" numeric(18,2) NOT NULL,        -- trader gross P&L (USD)
+  "openedAt"    timestamptz NOT NULL,
+  "closedAt"    timestamptz NOT NULL,
+  "phaseAtOpen" integer,
+  "syncedAt"    timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY ("accountId", "tradeId")
+);
+CREATE INDEX IF NOT EXISTS "signal_PlatformTrade_closedAt_idx" ON "signal"."PlatformTrade" ("closedAt" DESC);

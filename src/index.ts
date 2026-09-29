@@ -7,6 +7,7 @@ import { selectExecutionAdapter } from "./dxfeed/execution.js";
 import { DxFeedAdapter } from "./dxfeed/adapter.js";
 import { sweepUnverified } from "./dxfeed/readiness.js";
 import { reapAbandoned } from "./broker/queue.js";
+import { startPlatformFeed, stopPlatformFeed } from "./dxfeed/platform-feed.js";
 
 if (!useDatabase) {
   console.error("[fatal] DATABASE_URL is not set — the signal app needs the shared trading database to read trades from.");
@@ -80,6 +81,9 @@ if (!config.autoCopyEnabled) {
   console.log("[copy] auto-copy disabled (AUTO_COPY_ENABLED is not 1) — no dxFeed provisioning, readiness probes or copied orders");
 }
 
+// Trades placed directly on Deepchart / other dxFeed platforms → signals (read-only).
+startPlatformFeed();
+
 server.listen(config.port, () => {
   console.log(`SignalBackend listening on http://localhost:${config.port}`);
   console.log(`  WebSocket   ws://localhost:${config.port}/ws`);
@@ -92,6 +96,7 @@ server.listen(config.port, () => {
 function shutdown() {
   console.log("\nShutting down…");
   stopCopyEngine();
+  stopPlatformFeed();
   clearInterval(reaper);
   if (readinessSweep) clearInterval(readinessSweep);
   server.close(() => process.exit(0));

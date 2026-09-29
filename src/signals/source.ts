@@ -2,6 +2,7 @@ import { getPool } from "../db/pool.js";
 import { config } from "../config.js";
 import { buildDemoSignals, demoSignalsEnabled } from "./demo.js";
 import { getMarks, getMultiplier } from "./marks.js";
+import { getPlatformPositions } from "../dxfeed/platform-feed.js";
 
 /* Signal source — the core of the product. Reads the trading platform's trades
  * (READ-ONLY, from public.*) and turns each into a COUNTER signal:
@@ -43,6 +44,9 @@ export interface Signal {
   unrealizedPnl: number | null; // signal open P&L (active only) = -trader unrealized
   win: boolean | null;
   locked?: boolean; // over the user's daily limit — price levels hidden (upsell)
+  /** Where the trader's trade was placed: the Vault web platform, or directly on
+   *  a dxFeed platform (Deepchart / ATAS / Quantower) — see dxfeed/platform-feed.ts. */
+  source?: "vault" | "deepchart";
 }
 
 /**
@@ -79,11 +83,12 @@ export async function getActiveSignals(): Promise<Signal[]> {
      JOIN "public"."Account" a ON a."id" = l."accountId"
      ORDER BY l."openedAt" DESC`,
   );
-  if (rows.length === 0) return [];
+  const platform = getPlatformPositions();
+  if (rows.length === 0 && platform.length === 0) return [];
 
-  const marks = await getMarks(rows.map((r) => r.symbol as string));
+  const marks = await getMarks([...rows.map((r) => r.symbol as string), ...platform.map((p) => p.symbol)]);
 
-  return rows.map((r) => {
+  const vault = rows.map((r): Signal => {
     const entry = num(r.entryPrice);
     const qty = num(r.quantity);
     const side = invert(r.side);
@@ -118,16 +123,65 @@ export async function getActiveSignals(): Promise<Signal[]> {
       pnl: null,
       unrealizedPnl,
       win: null,
+      source: "vault",
     };
   });
+
+  // Positions opened directly on Deepchart / other dxFeed platforms, inverted the
+  // same way. Marked to the same live quote as Vault rows; if there is none, the
+  // opposite of the trader's own open P&L reported by dxFeed.
+  const deepchart = platform.map((p): Signal => {
+    const side = invert(p.side);
+    const dir = side === "LONG" ? 1 : -1;
+    const mark = marks.get(p.symbol);
+    const unrealizedPnl =
+      mark != null && mark > 0 && p.entry > 0
+        ? Math.round((mark - p.entry) * p.quantity * dir * getMultiplier(p.symbol) * 100) / 100
+        : p.traderOpenPl != null
+          ? Math.round(-p.traderOpenPl * 100) / 100
+          : null;
+    return {
+      id: `dx:${p.id}`,
+      symbol: p.symbol,
+      market: market(p.symbol),
+      side,
+      entry: p.entry,
+      stopLoss: p.traderTarget,
+      takeProfit: p.traderStop,
+      exit: null,
+      quantity: p.quantity,
+      conviction: p.conviction || 1,
+      status: "active",
+      openedAt: p.openedAt,
+      closedAt: null,
+      pnl: null,
+      unrealizedPnl,
+      win: null,
+      source: "deepchart",
+    };
+  });
+
+  if (deepchart.length === 0) return vault;
+  return [...vault, ...deepchart].sort((a, b) => b.openedAt - a.openedAt);
 }
+
+/* Closed trades from both places a trader can trade: the platform's own
+ * ClosedPosition table and the Deepchart / dxFeed trades synced into
+ * signal.PlatformTrade. Same column shape, so both map through toClosedSignal. */
+const CLOSED_UNION = `
+  SELECT "id","symbol","side"::text AS "side","quantity","entryPrice","exitPrice","realizedPnl","openedAt","closedAt","phaseAtOpen",
+         'vault' AS "source"
+  FROM "public"."ClosedPosition"
+  UNION ALL
+  SELECT 'dx:' || "accountId" || ':' || "tradeId","symbol","side","quantity","entryPrice","exitPrice","realizedPnl","openedAt","closedAt","phaseAtOpen"::smallint,
+         'deepchart' AS "source"
+  FROM "signal"."PlatformTrade"`;
 
 /** Closed signals within a window — inverted, with signal-side P&L.
  *  `untilMs` is inclusive; omit it for "up to now". */
 export async function getClosedSignals(sinceMs: number, untilMs?: number): Promise<Signal[]> {
   const { rows } = await getPool().query(
-    `SELECT "id","symbol","side","quantity","entryPrice","exitPrice","realizedPnl","openedAt","closedAt","phaseAtOpen"
-     FROM "public"."ClosedPosition"
+    `SELECT * FROM (${CLOSED_UNION}) c
      WHERE "closedAt" >= $1 AND ($2::timestamptz IS NULL OR "closedAt" <= $2)
      ORDER BY "closedAt" DESC`,
     [new Date(sinceMs), untilMs != null ? new Date(untilMs) : null],
@@ -155,6 +209,7 @@ function toClosedSignal(r: Record<string, unknown>): Signal {
     pnl: Math.round(signalPnl * 100) / 100,
     unrealizedPnl: null,
     win: Math.abs(signalPnl) < 0.005 ? null : signalPnl > 0,
+    source: r.source === "deepchart" ? "deepchart" : "vault",
   };
 }
 
@@ -200,8 +255,7 @@ export async function getMirrorSignals(limit = 500): Promise<Signal[]> {
 /** The newest `limit` closed signals regardless of age — mirrors adminListClosedPositions. */
 export async function getRecentClosedSignals(limit = 500): Promise<Signal[]> {
   const { rows } = await getPool().query(
-    `SELECT "id","symbol","side","quantity","entryPrice","exitPrice","realizedPnl","openedAt","closedAt","phaseAtOpen"
-     FROM "public"."ClosedPosition"
+    `SELECT * FROM (${CLOSED_UNION}) c
      ORDER BY "closedAt" DESC
      LIMIT $1`,
     [limit],

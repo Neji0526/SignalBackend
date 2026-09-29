@@ -1,6 +1,7 @@
 import { config } from "../config.js";
 import { getLinkByAccountId, getLinkByDxUserId, upsertDxFeedLink } from "./store.js";
 import { AccountStatus } from "./types.js";
+import { requestTradesSync } from "./platform-feed.js";
 
 /* dxFeed webhook receiver — real-time account/subscription/trade events.
  *
@@ -95,9 +96,10 @@ async function dispatch(ev: WebhookEvent): Promise<void> {
       return;
     }
     case NotificationCategory.TRADE_REPORT:
-      // A closed trade with realized P&L. For now, log it; a later step feeds these
-      // into the copy/performance views for reconciliation against our own records.
+      // A closed trade with realized P&L — pull it into the signal feed now
+      // instead of waiting for the next scheduled platform-feed sync.
       console.log(`[dxfeed] trade report (account ${ev.accountId}):`, JSON.stringify(ev.tradeReport));
+      requestTradesSync();
       return;
     default:
       // OVERNIGHT / PORTFOLIO / ORG_USER — accepted (200) but nothing to persist yet.

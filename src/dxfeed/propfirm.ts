@@ -5,6 +5,7 @@ import type {
   NewSubscriptionInput, SubscriptionResult,
   TradingTokenInput, TradingTokenResult,
   DxSymbol,
+  PlatformAccountInfo, PlatformTrade,
 } from "./types.js";
 
 /* dxFeed / Volumetrica Propfirm REST client.
@@ -43,10 +44,10 @@ export class PropfirmClient {
 
   private async call<T>(
     action: string,
-    opts: { method?: "GET" | "POST"; query?: Query; body?: unknown } = {},
+    opts: { method?: "GET" | "POST"; query?: Query; body?: unknown; v2?: boolean; raw?: boolean } = {},
   ): Promise<T> {
     const method = opts.method ?? (opts.body ? "POST" : "GET");
-    const url = new URL(`/api/Propsite/${action}`, this.baseUrl);
+    const url = new URL(`${opts.v2 ? "/api/v2/Propsite" : "/api/Propsite"}/${action}`, this.baseUrl);
     for (const [k, v] of Object.entries(opts.query ?? {})) {
       if (v !== undefined) url.searchParams.set(k, String(v));
     }
@@ -65,6 +66,7 @@ export class PropfirmClient {
 
     if (!text) return undefined as T;
     const json = JSON.parse(text) as unknown;
+    if (opts.raw) return json as T;
     // Defensive unwrap: if a {success, data} envelope ever appears, return .data.
     if (json && typeof json === "object" && "success" in json && "data" in json) {
       return (json as { data: T }).data;
@@ -93,6 +95,31 @@ export class PropfirmClient {
 
   getUserAccounts(userId: string): Promise<unknown[]> {
     return this.call<unknown[]>("GetUserAccounts", { query: { userId } });
+  }
+
+  // --- platform trade feed (read-only, V2) ---------------------------------
+
+  /** Realtime snapshot of every ENABLED account: open positions + working orders,
+   *  keyed by trading account id. Covers every platform (Deepchart, ATAS, …). */
+  bulkAccountsInfosEnabled(): Promise<Record<string, PlatformAccountInfo>> {
+    return this.call<Record<string, PlatformAccountInfo>>("Bulk/AccountsInfosEnabled", { v2: true });
+  }
+
+  /** Closed trades executed in [start, end] across every account, one page. */
+  async bulkTradesList(
+    start: Date,
+    end: Date,
+    nextPageToken?: string,
+  ): Promise<{ data: Record<string, PlatformTrade[]>; nextPageToken: string | null }> {
+    const res = await this.call<{ data?: Record<string, PlatformTrade[]>; nextPageToken?: string | null }>(
+      "Bulk/TradesList",
+      {
+        v2: true,
+        raw: true,
+        query: { utcStartDt: start.toISOString(), utcEndDt: end.toISOString(), nextPageToken },
+      },
+    );
+    return { data: res?.data ?? {}, nextPageToken: res?.nextPageToken || null };
   }
 
   // --- provisioning --------------------------------------------------------

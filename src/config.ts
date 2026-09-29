@@ -81,6 +81,21 @@ export const config = {
       apiVersion: num("DXFEED_TRADING_API_VERSION", 5),
     },
 
+    /**
+     * Platform trade feed: mirror trades placed directly on the dxFeed platforms
+     * (Deepchart / ATAS / Quantower) into the signal feed. Read-only — it never
+     * places an order. On whenever the API key is set, unless PLATFORM_FEED=0.
+     */
+    platformFeed: {
+      enabled: process.env.PLATFORM_FEED !== "0",
+      /** Open-position snapshot cadence. */
+      positionsPollMs: num("PLATFORM_POSITIONS_POLL_MS", 5_000),
+      /** Closed-trade sync cadence (a TRADE_REPORT webhook also triggers a sync). */
+      tradesPollMs: num("PLATFORM_TRADES_POLL_MS", 30_000),
+      /** History pulled on first start, so the Closed list isn't empty after a deploy. */
+      backfillDays: num("PLATFORM_TRADES_BACKFILL_DAYS", 30),
+    },
+
     /** Defaults applied when provisioning a subscriber's dxFeed account. */
     provisioning: {
       /** Starting balance for a new evaluation account. */

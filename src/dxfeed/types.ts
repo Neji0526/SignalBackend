@@ -172,3 +172,54 @@ export interface DxSymbol {
   inhibitTrading: boolean;
   archived: boolean;
 }
+
+/** Contract descriptor shared by positions, orders and trades. `name` is the root ("ES", "MNQ"). */
+export interface PlatformContract {
+  name?: string | null;
+  symbol?: string | null;
+  contractName?: string | null;
+}
+
+/** Open position from Bulk/AccountsInfosEnabled. Short == NEGATIVE quantity;
+ *  a flat contract traded earlier in the session still appears with quantity 0. */
+export interface PlatformPositionRow {
+  contractId?: number | null;
+  symbolName?: string | null;
+  contract?: PlatformContract | null;
+  entryDateUtc?: string | null;
+  price?: number | null;
+  quantity?: number | null;
+  openPl?: number | null;
+  convertedOpenPl?: number | null;
+}
+
+/** Order from Bulk/AccountsInfosEnabled. status 1 = Working; ordType 1 = Limit, 2 = Stop.
+ *  Sell == NEGATIVE totalQty. */
+export interface PlatformOrderRow {
+  contractId?: number | null;
+  status?: number | null;
+  ordType?: number | null;
+  insertPrice?: number | null;
+  totalQty?: number | null;
+  insertDtUtc?: string | null;
+}
+
+export interface PlatformAccountInfo {
+  status?: number | null;
+  positions?: PlatformPositionRow[] | null;
+  orders?: PlatformOrderRow[] | null;
+}
+
+/** Closed trade from Bulk/TradesList. There is no side field; entry/exit dates are unix ms. */
+export interface PlatformTrade {
+  tradeId?: number | string | null;
+  symbolName?: string | null;
+  contract?: PlatformContract | null;
+  entryDate?: number | null;
+  exitDate?: number | null;
+  quantity?: number | null;
+  entryPrice?: number | null;
+  exitPrice?: number | null;
+  grossPl?: number | null;
+  convertedGrossPl?: number | null;
+}
